@@ -2,6 +2,7 @@
 import time
 import json
 import pprint
+import random
 import asyncio
 import aiohttp
 import logging
@@ -45,10 +46,9 @@ def exponential_backoff_with_jitter(attempt):
     :rtype: int or float
     """
     base = 2
-    max_sleep = 10
-    millis_to_secs = 100000
-    jitter = random.randint(0, 1000)
-    return min((jitter * base ** attempt)/millis_to_secs, max_sleep)
+    max_sleep = 64
+    jitter = random.random() # gives fractional value between 0/1
+    return min((jitter + base ** attempt)/ms_to_secs, max_sleep)
 
 
 class AioApiSessionManager():
@@ -62,24 +62,29 @@ class AioApiSessionManager():
                          True if the call should be retried. Set to None
                          to disable retries.
                          Default: aio_api_sm.default_retry
-    :type should_retry: function
-    :param retries: maximum number of retries for a request. Default 3.
+    :type should_retry: function or None
+    :param retries: maximum number of retries for a request. Default 6.
     :type retries: int
     :param backoff: a callable that accepts the current number of attempts
                     and returns the time to sleep before retrying.
                     Set to None to disable backoff.
                     Default: aio_api_sm.exponential_backoff_with_jitter
-    :type backoff: function
-    :param rate_limit: maximum number of request per second. Default: 3.
+    :type backoff: function or None
+    :param rate_limit: maximum number of request per second. Default: 5.
                        Disable with None or 0.
-    :type rate_limit: int
-    :param rate_limit_burst: maximum rate limit burst size.
+    :type rate_limit: int or None
+    :param rate_limit_burst: maximum rate limit burst size. Default: 20.
     :type rate_limit_burst: int
+    :param max_requests: maximum number of requests to perform total.
+                         Set to 0 or None for unlimited. Default: None.
+    :type max_requests: int or None
     :param limit_per_host: maximum number of connections to the host.
-                           Default: 10
+                           must be >= rate_limit_burst to matter. Default: 20
     :type limit_per_host: int
     :param ttl_dns_cache: time to live for cached dns records. Default: 300s
     :type ttl_dns_cache: int
+    :param session_kwargs: key word arguments to pass to aiohttp.ClientSession
+    :type session_kwargs: key=value pairs
     """
 
     # users can call AioApiSessionManager.<shortcut> to execute a verb
@@ -95,9 +100,9 @@ class AioApiSessionManager():
     default_retry_after_delay = 5
 
     def __init__(self, api_base, headers=None, should_retry=default_retry,
-                 retries=3, backoff=exponential_backoff_with_jitter,
-                 rate_limit=3, rate_limit_burst=20,
-                 limit_per_host=10, ttl_dns_cache=300,
+                 retries=6, backoff=exponential_backoff_with_jitter,
+                 rate_limit=5, rate_limit_burst=20, max_requests=None,
+                 limit_per_host=20, ttl_dns_cache=300,
                  json_serialize=json.dumps, json_deserialize=json.loads,
                  **session_kwargs):
         self.api_base = api_base
@@ -105,6 +110,7 @@ class AioApiSessionManager():
         self.retries = retries
         self.backoff = backoff
         self.should_retry = should_retry
+        self.max_requests = max_requests
         self.limit_per_host = limit_per_host
         self.ttl_dns_cache = ttl_dns_cache
         self.json_serialize = json_serialize
@@ -131,6 +137,7 @@ class AioApiSessionManager():
         self.__session = None
         self._start = time.monotonic()
         self._requests = 0
+        log.info(f'stated new session manager: {self}')
 
     @property
     def session(self):
@@ -140,10 +147,12 @@ class AioApiSessionManager():
         :rtype: aiohttp.ClientSession
         """
         if not self.__session:
-           self.__session = aiohttp.ClientSession(
+            # inject the serializer chosen at init if not provided for session
+            if 'json_serialize' not in self.session_kwargs:
+                self.session_kwargs['json_serialize'] = self.json_serialize
+            self.__session = aiohttp.ClientSession(
                     self.api_base,
                     connector=self.connector,
-                    json_serialize=self.json_serialize,
                     **self.session_kwargs)
         return self.__session
 
@@ -254,9 +263,9 @@ class AioApiSessionManager():
         :returns: next token
         """
         # tokens are free if we aren't limited
-        if self.max_requests and self._requests == self.max_requests:
+        if self.max_requests and self._requests > self.max_requests:
             raise MaximumRequestsExceeded(
-                    f'Used {self_requests} of {self.max_requests}. No more.')
+                    f'Used {self.requests - 1} of {self.max_requests}.')
 
         if self.rate_limit:
             # if we are in the penalty box, wait for the event
@@ -327,9 +336,10 @@ class AioApiSessionManager():
                     log.debug(f'{method} {path}: backoff {backoff_time}s')
                     await asyncio.sleep(backoff_time)
             finally:
-                log.debug(f'finished {method} {path}')
+                log.debug(f'{method} {path}: finished')
 
-        raise RetriesExceededError("Maximum retries exceeded.")
+        raise RetriesExceededError(
+                f"{method} {path}: Maximum retries exceeded.")
 
     def _parse_retry_after(self, value):
         """Retry after headers can be seconds or timestamps, parse accordingly.
@@ -357,5 +367,11 @@ class AioApiSessionManager():
         """Pass the shortcut http verb functions as a partial to request."""
         if attr in self.shortcuts:
             return functools.partial(self.request, attr)
-        return AttributeError(
+        raise AttributeError(
                 f'{attr} doesnt exist on {self} or in {self.shortcuts}')
+
+    def __str__(self):
+        return (f'AioApiSessionManager({self.api_base}, '
+                f'rate_limit={self.rate_limit}/{self.rate_limit_burst}, '
+                f'retries={self.retries}/{self.should_retry}/{self.backoff}, '
+                f'max_requests=({self.max_requests}))')
