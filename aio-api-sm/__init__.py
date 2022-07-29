@@ -34,6 +34,23 @@ def default_retry(exception):
             return True
     return False
 
+def exponential_backoff_with_jitter(attempt):
+    """A simple exponential backoff with jitter callable.
+
+    Accepts the number of attempts as an argument and returns a backoff time.
+
+    :param attempt: the number of failed attempts so far.
+    :type attempt: int
+    :returns: seconds to sleep before next request.
+    :rtype: int or float
+    """
+    base = 2
+    max_sleep = 10
+    millis_to_secs = 100000
+    jitter = random.randint(0, 1000)
+    return min((jitter * base ** attempt)/millis_to_secs, max_sleep)
+
+
 class RequestManager():
     """An async, retying, rate limited HTTP request manager.
 
@@ -42,10 +59,17 @@ class RequestManager():
     :param headers: headers to add to the request.
     :type headers: dict
     :param should_retry: a callable that accepts an exception and returns
-                         True if the call should be retried.
+                         True if the call should be retried. Set to None
+                         to disable retries.
+                         Default: aio_api_sm.default_retry
     :type should_retry: function
     :param retries: maximum number of retries for a request. Default 3.
     :type retries: int
+    :param backoff: a callable that accepts the current number of attempts
+                    and returns the time to sleep before retrying.
+                    Set to None to disable backoff.
+                    Default: aio_api_sm.exponential_backoff_with_jitter
+    :type backoff: function
     :param rate_limit: maximum number of request per second. Default: 3.
                        Disable with None or 0.
     :type rate_limit: int
@@ -58,18 +82,28 @@ class RequestManager():
     :type ttl_dns_cache: int
     """
 
+    # users can call AioApiSessionManager.<shortcut> to execute a verb
     shortcuts = ['delete', 'get', 'head', 'options', 'patch', 'post', 'put']
+
+    # minimum queue length
     rate_limit_min_burst_size = 2
+
+    # minimum sleep for rate manager task between wakes
     min_sleep = 0.1
 
+    # how long to pause if we get a malformed 429
+    default_retry_after_delay = 5
+
     def __init__(self, api_base, headers=None, should_retry=default_retry,
-                 retries=3, rate_limit=3, rate_limit_burst=20,
+                 retries=3, backoff=exponential_backoff_with_jitter,
+                 rate_limit=3, rate_limit_burst=20,
                  limit_per_host=10, ttl_dns_cache=300,
                  json_serialize=json.dumps, json_deserialize=json.loads,
                  **session_kwargs):
         self.api_base = api_base
         self.headers = headers
         self.retries = retries
+        self.backoff = backoff
         self.should_retry = should_retry
         self.limit_per_host = limit_per_host
         self.ttl_dns_cache = ttl_dns_cache
@@ -86,7 +120,9 @@ class RequestManager():
         self.retry_after_time = None
 
         self.rate_limit = rate_limit
-        self.rate_limit_burst = rate_limit_burst
+        # if the max burst size is smaller than the rate limit, use the
+        # rate limit as the max burst size.
+        self.rate_limit_burst = max(rate_limit, rate_limit_burst)
 
         if self.rate_limit:
             self._token_queue = asyncio.Queue(int(rate_limit_burst))
@@ -263,15 +299,11 @@ class RequestManager():
             self._requests += 1
             try:
                 await self._get_token()
-                log.debug(f'started {method} {path}')
+                log.debug(f'{method} {path}: started')
                 meth = getattr(self.session, method)
                 resp = await meth(path, headers=self.headers, *args, **kwargs)
 
-                resp_text = await resp.text()
-                if resp_text:
-                    resp_json = self.json_deserialize(resp_text)
-                else:
-                    resp_json = {}
+                resp_json = await resp.json(loads=self.json_deserialize)
 
                 if resp.status == 429:
                     retry_after = resp.headers.get(
@@ -279,15 +311,21 @@ class RequestManager():
                     retry_after_secs = self._parse_retry_after(retry_after)
                     self.retry_after_time = time.monotonic() + retry_after_secs
                     self.retry_after_event.clear()
-                    log.warning(f"rate limiting: {retry_after_secs}s")
+                    log.warning(
+                            f"{method} {path}: 429 sleep {retry_after_secs}s")
                 else:
                     resp.raise_for_status()
                     return resp_json
             except Exception as e:
                 log.error("Request {} to {} failed: {}.".format(
                     method, path, e))
-                if not self.should_retry(e):
+                if not (self.should_retry or self.should_retry(e)):
                     raise
+                # we should retry, so do the backoff bit.
+                if self.backoff:
+                    backoff_time = self.backoff(requests)
+                    log.debug(f'{method} {path}: backoff {backoff_time}s')
+                    await asyncio.sleep(backoff_time)
             finally:
                 log.debug(f'finished {method} {path}')
 
