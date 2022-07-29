@@ -1,0 +1,10 @@
+dist/
+_build/
+build/
+__pycache__
+*.pyc
+.env/
+*egg-info/
+*secret*
+*.log
+data/
