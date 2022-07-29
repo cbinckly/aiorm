@@ -10,6 +10,7 @@ setuptools.setup(
     author_email="cbinckly@gmail.com",
     packages=['aiorm'],
     install_requires=[
+        'python-dateutil',
         'aiohttp',
     ],
     description="Asynchronous HTTP Request Manager.",
