@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aio-api-sm"
+version = "1.1"
+authors = [ {name="cbinckly"} ]
+description = "Asynchronous HTTP Session Manager with retry, rate limiting, and more."
+readme = "README.md"
+requires-python = ">=3.9"
+keywords = ["aio", "aiohttp", "session", "rate", "retry", "request"]
+license = {file = "LICENSE.md"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "python-dateutil",
+    "aiohttp"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/cbinckly/aio-api-sm"
+"Documentation" = "https://aio-api-sm.rtfd.io"
+
+[tool.setuptools]
+packages = ['aio_api_sm']
