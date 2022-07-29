@@ -8,7 +8,7 @@ setuptools.setup(
     version="1.0",
     author="cbinckly",
     author_email="cbinckly@gmail.com",
-    packages=['aio-api-sm'],
+    packages=['aio_api_sm'],
     install_requires=[
         'python-dateutil',
         'aiohttp',
@@ -16,7 +16,7 @@ setuptools.setup(
     description="Asynchronous HTTP Session Manager with retry, rate limiting, and more.",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://aiorm.rtfd.io",
+    url="https://aio-api-sm.rtfd.io",
     classifiers=[
         "Programming Language :: Python :: 3",
         "Operating System :: OS Independent",

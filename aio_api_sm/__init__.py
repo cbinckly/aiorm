@@ -51,8 +51,8 @@ def exponential_backoff_with_jitter(attempt):
     return min((jitter * base ** attempt)/millis_to_secs, max_sleep)
 
 
-class RequestManager():
-    """An async, retying, rate limited HTTP request manager.
+class AioApiSessionManager():
+    """An async, retying, rate limited HTTP session manager.
 
     :param api_base: the root of the API host to connect to.
     :type api_base: str
