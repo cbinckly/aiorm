@@ -10,13 +10,13 @@ import functools
 
 log = logging.getLogger(__name__)
 
-class RequestManagerError(RuntimeError):
+class AioApiSessionManagerError(RuntimeError):
     pass
 
-class RetriesExceededError(RequestManagerError):
+class RetriesExceededError(AioApiSessionManagerError):
     pass
 
-class MaxRequestsExceededError(RequestManagerError):
+class MaxRequestsExceededError(AioApiSessionManagerError):
     pass
 
 def default_retry(exception):
@@ -48,7 +48,7 @@ def exponential_backoff_with_jitter(attempt):
     base = 2
     max_sleep = 64
     jitter = random.random() # gives fractional value between 0/1
-    return min((jitter + base ** attempt)/ms_to_secs, max_sleep)
+    return min(jitter + base ** attempt, max_sleep)
 
 
 class AioApiSessionManager():
@@ -202,7 +202,8 @@ class AioApiSessionManager():
 
             sleep = self._sleep_duration()
             last_check_end = time.monotonic()
-            log.debug(f'starting rate manager {self.rate_limit}')
+            log.debug(f'starting rate manager '
+                      f'{self.rate_limit}/{self.rate_limit_burst}')
 
             # start with a burst capable queue
             for i in range(0, self._token_queue.maxsize):
@@ -218,7 +219,7 @@ class AioApiSessionManager():
                     if now >= self.retry_after_time:
                         self.retry_after_event.set()
                         self.retry_after_time = None
-                        log.debug(f'retry time event set, time to go!')
+                        log.debug(f'retry-after time has passed. event set.')
                     else:
                         retry_wake_in = self.retry_after_time - time.monotonic()
                         log.warn(f'retry event unset. wake in {retry_wake_in}')
@@ -235,13 +236,9 @@ class AioApiSessionManager():
                                     self._token_queue.qsize())
                     new_tokens = int(min(time_tokens, max_tokens))
 
-                    log.debug(f'adding {new_tokens} new tokens!')
-
                     # add the tokens
                     for i in range(0, new_tokens):
                         self._token_queue.put_nowait(i)
-
-                    log.debug(f'refilled queue {self._token_queue.qsize()}')
 
                 # store the time and sleep the interval.
                 last_check_end = now
@@ -262,7 +259,6 @@ class AioApiSessionManager():
 
         :returns: next token
         """
-        # tokens are free if we aren't limited
         if self.max_requests and self._requests > self.max_requests:
             raise MaximumRequestsExceeded(
                     f'Used {self.requests - 1} of {self.max_requests}.')
@@ -308,7 +304,7 @@ class AioApiSessionManager():
             self._requests += 1
             try:
                 await self._get_token()
-                log.debug(f'{method} {path}: started')
+                log.debug(f'{method} {path}: try {requests} started')
                 meth = getattr(self.session, method)
                 resp = await meth(path, headers=self.headers, *args, **kwargs)
 
@@ -344,6 +340,9 @@ class AioApiSessionManager():
     def _parse_retry_after(self, value):
         """Retry after headers can be seconds or timestamps, parse accordingly.
 
+        :param value: Retry-After header value. Either an integer number of
+                      seconds or a date string.
+        :type value: int or str
         :returns: seconds to retry after.
         :rtype: int
         """
@@ -374,4 +373,4 @@ class AioApiSessionManager():
         return (f'AioApiSessionManager({self.api_base}, '
                 f'rate_limit={self.rate_limit}/{self.rate_limit_burst}, '
                 f'retries={self.retries}/{self.should_retry}/{self.backoff}, '
-                f'max_requests=({self.max_requests}))')
+                f'max_requests={self.max_requests})')
