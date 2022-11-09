@@ -321,14 +321,15 @@ class AioApiSessionManager():
                     self.retry_after_event.clear()
                     log.warning(
                             f"{method} {path}: 429 sleep {retry_after_secs}s")
-                elif resp.status == 400 and self.ignore_400:
-                    return resp_json
                 else:
                     resp.raise_for_status()
                     return resp_json
             except Exception as e:
                 log.error("Request {} to {} [{}/{}] failed: {}.".format(
                     method, path, args, kwargs, e))
+                # special 400 handling for RFPIO's search responses.
+                if resp.status == 400 and self.ignore_400:
+                    raise
                 if not (self.should_retry or self.should_retry(e)):
                     raise
                 # we should retry, so do the backoff bit.
