@@ -83,6 +83,8 @@ class AioApiSessionManager():
     :type limit_per_host: int
     :param ttl_dns_cache: time to live for cached dns records. Default: 300s
     :type ttl_dns_cache: int
+    :param ignore_400: treat 400 responses as ok.
+    :type ignore_400: bool
     :param session_kwargs: key word arguments to pass to aiohttp.ClientSession
     :type session_kwargs: key=value pairs
     """
@@ -104,7 +106,7 @@ class AioApiSessionManager():
                  rate_limit=5, rate_limit_burst=20, max_requests=None,
                  limit_per_host=20, ttl_dns_cache=300,
                  json_serialize=json.dumps, json_deserialize=json.loads,
-                 **session_kwargs):
+                 ignore_400=False, **session_kwargs):
         self.api_base = api_base
         self.headers = headers
         self.retries = retries
@@ -115,6 +117,7 @@ class AioApiSessionManager():
         self.ttl_dns_cache = ttl_dns_cache
         self.json_serialize = json_serialize
         self.json_deserialize = json_deserialize
+        self.ignore_400 = ignore_400
         self.session_kwargs = session_kwargs
 
         self.connector = aiohttp.TCPConnector(
@@ -318,6 +321,8 @@ class AioApiSessionManager():
                     self.retry_after_event.clear()
                     log.warning(
                             f"{method} {path}: 429 sleep {retry_after_secs}s")
+                elif resp.status == 400 and self.ignore_400:
+                    return resp_json
                 else:
                     resp.raise_for_status()
                     return resp_json
