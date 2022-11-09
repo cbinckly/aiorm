@@ -327,8 +327,8 @@ class AioApiSessionManager():
                     resp.raise_for_status()
                     return resp_json
             except Exception as e:
-                log.error("Request {} to {} failed: {}.".format(
-                    method, path, e))
+                log.error("Request {} to {} [{}/{}] failed: {}.".format(
+                    method, path, args, kwargs, e))
                 if not (self.should_retry or self.should_retry(e)):
                     raise
                 # we should retry, so do the backoff bit.
