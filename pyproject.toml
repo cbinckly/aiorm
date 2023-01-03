@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aio-api-sm"
-version = "1.1"
+version = "1.2"
 authors = [ {name="cbinckly"} ]
 description = "Asynchronous HTTP Session Manager with retry, rate limiting, and more."
 readme = "README.md"
