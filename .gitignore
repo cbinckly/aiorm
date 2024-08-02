@@ -8,3 +8,4 @@ __pycache__
 *secret*
 *.log
 data/
+.DS_Store

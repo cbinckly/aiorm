@@ -21,7 +21,6 @@ dependencies = [
 
 [project.urls]
 "Homepage" = "https://github.com/cbinckly/aio-api-sm"
-"Documentation" = "https://aio-api-sm.rtfd.io"
 
 [tool.setuptools]
 packages = ['aio_api_sm']
